@@ -1,0 +1,20 @@
+/*
+ * 命中的回复只被打上一个 class，具体表现由 <html> 上的 data-xsf-mode 决定。
+ * 好处：切换模式 / 拖动透明度滑块时，整页效果瞬间更新，不需要遍历任何 DOM。
+ */
+
+/* 半透明模式：--xsf-opacity 由 content script 写入，0 = 完全看不见，1 = 原样 */
+html[data-xsf-mode="dim"] .xsf-filtered {
+  opacity: var(--xsf-opacity, 0.15) !important;
+  transition: opacity 0.12s ease-out;
+}
+
+/* 拉到「完全透明」时顺手关掉鼠标交互，免得点到看不见的东西 */
+html[data-xsf-mode="dim"][data-xsf-invisible="1"] .xsf-filtered {
+  pointer-events: none !important;
+}
+
+/* 隐藏模式：整条回复消失，就像不存在一样 */
+html[data-xsf-mode="hide"] .xsf-filtered {
+  display: none !important;
+}

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+  <title>X Spam Filter</title>
+</head>
+<body>
+
+<header class="head">
+  <div class="brand">
+    <span class="dot"></span>
+    <div>
+      <h1>X Spam Filter</h1>
+      <p class="sub" id="status">仅在推文详情页过滤回复</p>
+    </div>
+  </div>
+  <label class="switch" title="总开关">
+    <input type="checkbox" id="enabled">
+    <span class="track"><span class="knob"></span></span>
+  </label>
+</header>
+
+<main>
+  <section class="card">
+    <h2>命中后的处理方式</h2>
+    <div class="modes">
+      <label class="mode">
+        <input type="radio" name="mode" value="dim" id="mode-dim">
+        <span class="mode-body">
+          <strong>变透明</strong>
+          <em>回复还在，只是变淡</em>
+        </span>
+      </label>
+      <label class="mode">
+        <input type="radio" name="mode" value="hide" id="mode-hide">
+        <span class="mode-body">
+          <strong>隐藏</strong>
+          <em>整条消失，像不存在</em>
+        </span>
+      </label>
+    </div>
+
+    <div class="slider-row" id="opacity-row">
+      <div class="slider-head">
+        <span>透明度</span>
+        <span class="val" id="opacity-val">85%</span>
+      </div>
+      <input type="range" id="opacity" min="0" max="100" step="5">
+      <div class="ticks"><span>0% 和原来一样</span><span>100% 完全看不见</span></div>
+    </div>
+
+    <div class="preview" id="preview">
+      <div class="preview-label">预览</div>
+      <div class="preview-row" id="preview-row">
+        <div class="avatar"></div>
+        <div class="lines">
+          <div class="line short"></div>
+          <div class="line"></div>
+          <div class="line mid"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>我的关键词</h2>
+    <textarea id="user-keywords" rows="6" spellcheck="false"
+              placeholder="每行一个关键词，例如：&#10;同城线下&#10;点我主页&#10;/^\d{6,}$/"></textarea>
+    <p class="hint">
+      <span class="saved" id="saved">已保存</span>
+      每行一个。用 <code>/…/flags</code> 表示正则；正则保留空格、换行和大小写语义。
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>词库</h2>
+    <p class="card-note">两份词库各管一片，可分别开关；命中任意一条即算垃圾回复。</p>
+
+    <div class="source" id="builtin-source">
+      <div class="source-head">
+        <label class="row">
+          <input type="checkbox" id="use-builtin">
+          <span>内置词库 <b id="builtin-count">0</b> 条</span>
+        </label>
+        <button type="button" class="sync-button" id="sync-builtin"
+                title="从 ZPVIP/x-spam-filter 同步 keywords.txt">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 12a8 8 0 0 1-14.93 4M4 12A8 8 0 0 1 18.93 8M5 16H2v3M19 8h3V5"/>
+          </svg>
+          <span>同步</span>
+        </button>
+      </div>
+      <p class="source-desc">本扩展自带并随版本更新，也可以随时同步 GitHub 上的最新版。</p>
+      <p class="sync-status" id="builtin-status" aria-live="polite" hidden></p>
+      <details class="source-edit" id="builtin-details">
+        <summary>逐条查看</summary>
+        <input type="search" class="kw-filter" id="builtin-filter" spellcheck="false"
+               placeholder="搜索这份词库">
+        <div class="kw-list" id="builtin-list"></div>
+      </details>
+    </div>
+
+    <div class="source" id="community-source">
+      <div class="source-head">
+        <label class="row">
+          <input type="checkbox" id="use-community">
+          <span>社区词库 <b id="community-count">0</b> 条</span>
+        </label>
+        <button type="button" class="sync-button" id="sync-community"
+                title="从 amahteru/x-comment-blocker 同步 keywords.txt">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 12a8 8 0 0 1-14.93 4M4 12A8 8 0 0 1 18.93 8M5 16H2v3M19 8h3V5"/>
+          </svg>
+          <span>同步</span>
+        </button>
+      </div>
+      <p class="source-desc">
+        来自社区维护的开源项目
+        <a href="https://github.com/amahteru/x-comment-blocker" target="_blank"
+           rel="noopener noreferrer">x-comment-blocker</a>，覆盖面更广，需要联网获取。
+      </p>
+      <p class="sync-status" id="community-status" aria-live="polite" hidden></p>
+      <details class="source-edit" id="community-details">
+        <summary>逐条查看</summary>
+        <input type="search" class="kw-filter" id="community-filter" spellcheck="false"
+               placeholder="搜索这份词库">
+        <div class="kw-list" id="community-list"></div>
+      </details>
+    </div>
+
+    <p class="card-note foot-note">
+      两份词库都是只读快照，同步时整份替换 —— 所以误伤不要去改词库，
+      点那条词右边的「<b>白名单</b>」把它停掉。
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>白名单 <b id="whitelist-count">0</b> 条</h2>
+    <textarea id="whitelist" rows="4" spellcheck="false"
+              placeholder="每行一个被误伤的词，例如：&#10;同城&#10;/^\d{6,}$/"></textarea>
+    <p class="hint">
+      <span class="saved" id="whitelist-saved">已保存</span>
+      列在这里的词一律不生效，哪份词库里有都一样。这份完全归你，
+      <b>「恢复默认设置」和同步都不会动它</b>。
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>匹配设置</h2>
+    <label class="row">
+      <input type="checkbox" id="match-names">
+      <span>同时匹配昵称和 @用户名</span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="ignore-spaces">
+      <span>忽略空格与隐藏字符（识别「同 城 约」）</span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="case-sensitive">
+      <span>普通关键词区分大小写</span>
+    </label>
+
+  </section>
+</main>
+
+<footer>
+  <span id="count">本页已过滤 0 条</span>
+  <a class="follow" href="https://x.com/PengZhangCom" target="_blank" rel="noopener noreferrer"
+     title="在 X 上关注作者 @PengZhangCom">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+    </svg>
+    @PengZhangCom
+  </a>
+  <button id="reset" class="link">恢复默认设置</button>
+</footer>
+
+<div class="modal" id="confirm" hidden>
+  <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+    <h3 id="confirm-title">恢复默认设置？</h3>
+    <p>
+      处理方式、透明度、匹配选项会还原成出厂状态；<b>两份词库</b>都会重新拉取上游最新版。
+    </p>
+    <p class="safe">
+      ✓ 「我的关键词」<b id="confirm-user-count">0</b> 条和「白名单」<b id="confirm-wl-count">0</b>
+      条不受影响，会原样保留。
+    </p>
+    <div class="actions">
+      <button class="btn" id="confirm-cancel">取消</button>
+      <button class="btn danger" id="confirm-ok">恢复默认</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
