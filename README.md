@@ -5,6 +5,18 @@
 **不屏蔽账号、不调用 X 的任何 API、不刷新页面。** 只在你打开的推文详情页里，把命中关键词的回复
 **变透明**（透明度自定义）或**直接隐藏**。
 
+## 安装
+
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/gpfkmempinhlopfkomklkkbdeggaknmo?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/x-spam-filter/gpfkmempinhlopfkomklkkbdeggaknmo)
+
+
+**→ [从 Chrome 应用商店安装](https://chromewebstore.google.com/detail/x-spam-filter/gpfkmempinhlopfkomklkkbdeggaknmo)**
+
+Chrome、Edge、Brave 等 Chromium 内核的浏览器都可以从这里安装。装好即可用：默认开启，
+词库和设置都有默认值，不需要配置。想调整就点浏览器右上角的扩展图标。
+
+想改词库或改代码，见[从源码安装](#从源码安装开发者)。
+
 ## 效果
 
 同一条推文的评论区，两种模式的对比。
@@ -54,12 +66,6 @@
 
 关键词过滤最多让你少看到一条回复。不读 cookie、不给 X 发任何请求，关掉开关就恢复原样。
 真要拉黑某个号，X 自带的按钮一直都在。
-
-## 安装
-
-1. Chrome 打开 `chrome://extensions/`
-2. 右上角打开「开发者模式」
-3. 点「加载已解压的扩展程序」，选择本目录（`x-spam-filter/`）
 
 ## 使用
 
@@ -139,6 +145,19 @@
 写错的正则会被忽略并在控制台提示，不影响其它关键词。
 为避免 `RegExp.lastIndex` 造成间歇性漏判，`g` 和 `y` flag 会自动移除。
 
+## 从源码安装（开发者）
+
+要改词库、改代码或者跑最新的未发布版本，直接加载源码目录：
+
+1. clone 或下载本仓库
+2. Chrome 打开 `chrome://extensions/`
+3. 右上角打开「开发者模式」
+4. 点「加载已解压的扩展程序」，选择 `x-spam-filter/` 目录
+
+出厂词库就是根目录的 `keywords.txt`，每行一条，改完重新加载扩展即可生效，不用改 JavaScript。
+
+源码版和商店版是两个独立的扩展（ID 不同），设置和词库各存一份、互不相通。
+两个同时装着会各跑一遍过滤，建议只留一个。
 
 ## 实现要点
 
