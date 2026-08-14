@@ -22,17 +22,28 @@
   const NAME_SEL = '[data-testid="User-Name"]';
 
   const HIT_CLASS = "xsf-filtered";
+  /** 命中的词就地包一层 <mark class="xsf-hl">。 */
+  const HL_CLASS = "xsf-hl";
+  const HL_SEL = "mark." + HL_CLASS;
+  /** 命中范围盖到 emoji（<img alt>）时，图片本身打个 class。 */
+  const HL_IMG_CLASS = "xsf-hl-img";
   /** 缓存签名里拼接各字段用的分隔符，正文里不可能出现。 */
   const SEP = "\u001f";
   const HIT_ATTR = "data-xsf-keyword";
+  const HL_KW_ATTR = "data-xsf-kw";
   const MODE_ATTR = "data-xsf-mode";
   const INVISIBLE_ATTR = "data-xsf-invisible";
+  const HL_ATTR = "data-xsf-hl";
   const OPACITY_VAR = "--xsf-opacity";
 
   /** 单个合并正则最多塞多少关键词。太大编译慢，太小片数多。 */
   const CHUNK_SIZE = 400;
   /** 一次 MutationObserver 回调里超过这个数量的记录，直接退化成全量扫描。 */
   const MUTATION_BURST = 800;
+  /** 单个文本节点里最多高亮这么多处，防御超长正文。 */
+  const MAX_MARKS_PER_NODE = 20;
+  /** 鼠标离开高亮词后，留这么久让用户把鼠标移进卡片。 */
+  const POP_GRACE_MS = 220;
   /** SPA 换页后 X 是异步渲染的，按这些延迟补扫几次。 */
   const RESCAN_DELAYS = [0, 250, 800, 1800, 3500];
 
@@ -41,9 +52,15 @@
 
   /** 各类零宽 / 方向控制字符。正则匹配时保留真正的空白和换行。 */
   const INVISIBLE_RE = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]+/g;
+  /** 单个字符是不是零宽/方向控制字符（上面那个带 g，不能拿来做单字符判断）。 */
+  const INVISIBLE_ONE_RE =
+    /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/;
   const REGEX_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
 
   let cfg = { ...DEFAULTS };
+
+  /** 命中词 -> 宽松正则的缓存；词库重编时一起清掉。 */
+  const looseCache = new Map();
 
   /** 普通关键词合并成的大正则（分片）。 */
   let plainMatchers = [];
@@ -132,6 +149,9 @@
 
     // 长词优先，命中时报告的是最具体的那个词
     plain.sort((a, b) => b.length - a.length);
+
+    // 宽松正则是按 ignoreSpaces / caseSensitive 拼出来的，这两个开关一变就得作废
+    looseCache.clear();
 
     plainMatchers = [];
     for (let i = 0; i < plain.length; i += CHUNK_SIZE) {
@@ -234,12 +254,224 @@
     }
   }
 
+  // ==================== 命中词的就地高亮 ====================
+
+  /**
+   * 把命中的那条词在原文里找出来包成 <mark>。
+   *
+   * 匹配是在归一化后的文本上做的（小写、去掉空白与零宽字符），而 DOM 里是原文，
+   * 两边的下标对不上。所以这里不去做下标映射，而是反过来用关键词造一个「宽松正则」：
+   * 每个字之间允许夹任意空白/零宽字符，直接拿它去原文里找 —— 「求主␣人」「同 城」
+   * 这类拆字写法照样能定位到。
+   */
+  function looseRegex(hit) {
+    const cached = looseCache.get(hit);
+    if (cached !== undefined) return cached;
+
+    let re = null;
+    const asRegex = globalThis.XSF_asRegex(hit);
+    if (asRegex) {
+      // 命中的是 /正则/：直接拿它去原文里找，加上 g 以便找出所有出现的位置
+      try {
+        re = new RegExp(asRegex[1], asRegex[2].replace(/[gy]/gi, "") + "g");
+      } catch {
+        re = null;
+      }
+    } else {
+      const joiner = cfg.ignoreSpaces ? globalThis.XSF_IGNORABLE_SRC : "";
+      const body = Array.from(hit, (ch) => escapeRegExp(ch)).join(joiner);
+      try {
+        re = new RegExp(body, cfg.caseSensitive ? "g" : "gi");
+      } catch {
+        re = null;
+      }
+    }
+
+    looseCache.set(hit, re);
+    return re;
+  }
+
+  /**
+   * 把一棵子树摊平成「和 readText 完全一致的字符串」+ 每段字符对应的 DOM 位置。
+   *
+   * 必须摊平了再找，不能逐个文本节点找：X 会把一条正文切成好几个 span，
+   * emoji 是 <img alt="🍒">，命中的又可能是 /^…$/ 这种只在整段文本上成立的正则 ——
+   * 逐节点找的话这些一个都定位不到。
+   */
+  function flatten(el) {
+    const segments = [];
+    let text = "";
+
+    const walker = document.createTreeWalker(
+      el,
+      NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT
+    );
+    let node = walker.currentNode;
+
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const piece = node.textContent || "";
+        if (piece) {
+          segments.push({ start: text.length, end: text.length + piece.length, node });
+          text += piece;
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const tagName = node.tagName.toLowerCase();
+        if (["br", "div", "p"].includes(tagName)) {
+          // 合成的换行，没有对应的文本节点，只占位
+          if (text && !text.endsWith("\n")) {
+            segments.push({ start: text.length, end: text.length + 1 });
+            text += "\n";
+          }
+        } else if (tagName === "img") {
+          const alt = node.getAttribute("alt") || "";
+          if (alt) {
+            segments.push({ start: text.length, end: text.length + alt.length, img: node });
+            text += alt;
+          }
+        }
+      }
+      node = walker.nextNode();
+    }
+
+    return { text, segments };
+  }
+
+  /** 在摊平后的文本里找出命中的位置，返回 [起, 止) 的列表。 */
+  function findRanges(text, hit) {
+    const re = looseRegex(hit);
+    if (!re || !text) return [];
+
+    const ranges = [];
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (!m[0]) { re.lastIndex++; continue; }   // 零长匹配，别死循环
+      ranges.push([m.index, m.index + m[0].length]);
+      if (ranges.length >= MAX_MARKS_PER_NODE) break;
+    }
+    if (ranges.length || !globalThis.XSF_asRegex(hit)) return ranges;
+
+    // 正则是在「去掉零宽字符」的文本上判定的，原文里可能夹着零宽字符导致对不上。
+    // 那就在去掉零宽字符的版本上再找一次，再把下标映射回原文。
+    let stripped = "";
+    const map = [];
+    for (let i = 0; i < text.length; i++) {
+      if (INVISIBLE_ONE_RE.test(text[i])) continue;
+      map.push(i);
+      stripped += text[i];
+    }
+    if (!stripped || stripped.length === text.length) return ranges;
+
+    re.lastIndex = 0;
+    while ((m = re.exec(stripped))) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      const from = map[m.index];
+      const to = map[m.index + m[0].length - 1] + 1;
+      if (from !== undefined && to !== undefined) ranges.push([from, to]);
+      if (ranges.length >= MAX_MARKS_PER_NODE) break;
+    }
+    return ranges;
+  }
+
+  /** 按命中区间把文本节点切开包 <mark>；命中范围里的 emoji 图片单独打个 class。 */
+  function wrapRanges(segments, ranges, hit) {
+    const jobs = new Map();
+    const images = new Set();
+
+    for (const [from, to] of ranges) {
+      for (const seg of segments) {
+        if (seg.end <= from || seg.start >= to) continue;
+        if (seg.img) { images.add(seg.img); continue; }
+        if (!seg.node) continue;                       // 合成的换行，跳过
+        const s = Math.max(from, seg.start) - seg.start;
+        const e = Math.min(to, seg.end) - seg.start;
+        if (e <= s) continue;
+        if (!jobs.has(seg.node)) jobs.set(seg.node, []);
+        jobs.get(seg.node).push([s, e]);
+      }
+    }
+
+    let count = 0;
+    for (const [node, list] of jobs) {
+      if (!node.parentNode) continue;
+      if (node.parentElement && node.parentElement.closest(HL_SEL)) continue;
+      list.sort((a, b) => a[0] - b[0]);
+
+      let head = node;
+      // 从后往前切，前面那些下标才不会失效
+      for (let i = list.length - 1; i >= 0; i--) {
+        const [s, e] = list[i];
+        if (e > head.textContent.length) continue;
+        head.splitText(e);                     // head = [0, e)
+        const middle = head.splitText(s);      // middle = [s, e)
+        const mark = document.createElement("mark");
+        mark.className = HL_CLASS;
+        mark.setAttribute(HL_KW_ATTR, hit);
+        middle.parentNode.insertBefore(mark, middle);
+        mark.appendChild(middle);
+        count++;
+      }
+    }
+
+    for (const img of images) {
+      img.classList.add(HL_IMG_CLASS);
+      img.setAttribute(HL_KW_ATTR, hit);
+      count++;
+    }
+    return count;
+  }
+
+  /** 在一棵子树里高亮命中的词，返回加了几处。 */
+  function highlightIn(root, hit) {
+    if (!root) return 0;
+    const { text, segments } = flatten(root);
+    if (!text) return 0;
+    const ranges = findRanges(text, hit);
+    if (!ranges.length) return 0;
+    return wrapRanges(segments, ranges, hit);
+  }
+
+  /** 把 <mark> 拆掉，文字还原；emoji 上的 class 也去掉。 */
+  function unhighlight(root) {
+    if (!root || !root.querySelectorAll) return;
+
+    for (const img of root.querySelectorAll("img." + HL_IMG_CLASS)) {
+      img.classList.remove(HL_IMG_CLASS);
+      img.removeAttribute(HL_KW_ATTR);
+    }
+
+    for (const mark of root.querySelectorAll(HL_SEL)) {
+      const parent = mark.parentNode;
+      if (!parent) continue;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+      // 把相邻的文本节点合回去，否则反复开关会把一段文字切成很多碎片
+      parent.normalize();
+    }
+  }
+
+  /** 只高亮正文、昵称和 @用户名 —— 也就是参与匹配的那几处。 */
+  function applyHighlight(article, hit) {
+    unhighlight(article);
+    if (!hit || cfg.highlightHit === false) return;
+    highlightIn(article.querySelector(TEXT_SEL), hit);
+    highlightIn(article.querySelector(NAME_SEL), hit);
+  }
+
+  /** React 重渲染会把我们插的 <mark> 冲掉，正文没变时也得能补回来。 */
+  function highlightMissing(article, hit) {
+    return Boolean(hit) && cfg.highlightHit !== false && !article.querySelector(HL_SEL);
+  }
+
   function clearAllMarks() {
     const marked = document.querySelectorAll("." + HIT_CLASS);
     for (const el of marked) {
       el.classList.remove(HIT_CLASS);
       el.removeAttribute(HIT_ATTR);
+      unhighlight(el);
     }
+    hidePop();
   }
 
   /**
@@ -251,6 +483,7 @@
     if (!cfg.enabled || !active) {
       root.removeAttribute(MODE_ATTR);
       root.removeAttribute(INVISIBLE_ATTR);
+      root.removeAttribute(HL_ATTR);
       return;
     }
     root.setAttribute(MODE_ATTR, cfg.mode === "hide" ? "hide" : "dim");
@@ -258,6 +491,9 @@
     root.style.setProperty(OPACITY_VAR, String((100 - level) / 100));
     if (level >= 100) root.setAttribute(INVISIBLE_ATTR, "1");
     else root.removeAttribute(INVISIBLE_ATTR);
+    // 这里只控制「悬停恢复原样」那条 CSS；高亮本身是插进 DOM 的 <mark>
+    if (cfg.highlightHit !== false) root.setAttribute(HL_ATTR, "1");
+    else root.removeAttribute(HL_ATTR);
   }
 
   // ==================== 判定 ====================
@@ -268,7 +504,11 @@
     const sig = [generation, text, name].join(SEP);
 
     const cached = state.get(article);
-    if (cached && cached.sig === sig) return;
+    if (cached && cached.sig === sig) {
+      // 正文没变，但 React 可能把我们插的 <mark> 重渲染掉了，补回去
+      if (highlightMissing(article, cached.hit)) applyHighlight(article, cached.hit);
+      return;
+    }
 
     let hit = null;
     if (keywordCount > 0 && !isMainTweet(article)) {
@@ -277,6 +517,7 @@
 
     state.set(article, { sig, hit });
     applyMark(article, hit);
+    applyHighlight(article, hit);
   }
 
   function flush() {
@@ -285,7 +526,13 @@
       return;
     }
     for (const article of pending) {
-      if (article.isConnected) evaluate(article);
+      if (!article.isConnected) continue;
+      // 单条回复出问题不能带着整页一起停掉过滤
+      try {
+        evaluate(article);
+      } catch (error) {
+        console.error("[XSF] 处理单条回复失败:", error);
+      }
     }
     pending.clear();
     scheduleBadge();
@@ -366,6 +613,129 @@
     if (!observer) return;
     observer.disconnect();
     observer = null;
+  }
+
+  // ==================== 命中词上的悬浮卡片 ====================
+
+  let pop = null;
+  let popKeyword = "";
+  let popHideTimer = 0;
+
+  function buildPop() {
+    const el = document.createElement("div");
+    el.className = "xsf-pop";
+    el.hidden = true;
+
+    const title = document.createElement("div");
+    title.className = "xsf-pop-title";
+    title.textContent = "命中的规则";
+
+    const kw = document.createElement("div");
+    kw.className = "xsf-pop-kw";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "xsf-pop-btn";
+
+    const hint = document.createElement("div");
+    hint.className = "xsf-pop-hint";
+    hint.textContent = "加进白名单后这条规则不再生效，其它词照旧";
+
+    el.append(title, kw, btn, hint);
+    // 挂在 body 上而不是回复里 —— 回复整条是半透明的，卡片放进去就跟着淡掉了
+    document.body.appendChild(el);
+
+    btn.addEventListener("click", whitelistCurrent);
+    el.addEventListener("mouseenter", () => clearTimeout(popHideTimer));
+    el.addEventListener("mouseleave", hidePopSoon);
+
+    pop = { el, kw, btn };
+    return pop;
+  }
+
+  function ellipsize(text, max) {
+    return text.length > max ? text.slice(0, max) + "…" : text;
+  }
+
+  function showPop(mark) {
+    const keyword = mark.getAttribute(HL_KW_ATTR) || "";
+    if (!keyword) return;
+    const { el, kw, btn } = pop || buildPop();
+
+    popKeyword = keyword;
+    kw.textContent = keyword;
+    btn.disabled = false;
+    btn.textContent = `把「${ellipsize(keyword, 16)}」加入白名单`;
+    btn.title = `把 ${keyword} 加入白名单`;
+
+    // 先摆出来才量得到自身尺寸
+    el.hidden = false;
+    el.style.left = "0px";
+    el.style.top = "0px";
+    const anchorRect = mark.getBoundingClientRect();
+    const popRect = el.getBoundingClientRect();
+
+    const left = Math.min(
+      Math.max(8, anchorRect.left + anchorRect.width / 2 - popRect.width / 2),
+      window.innerWidth - popRect.width - 8
+    );
+    // 默认贴在词的上方，上面放不下就翻到下面
+    const above = anchorRect.top - popRect.height - 8;
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(above >= 8 ? above : anchorRect.bottom + 8)}px`;
+  }
+
+  function hidePop() {
+    clearTimeout(popHideTimer);
+    popHideTimer = 0;
+    if (pop) pop.el.hidden = true;
+    popKeyword = "";
+  }
+
+  function hidePopSoon() {
+    clearTimeout(popHideTimer);
+    popHideTimer = setTimeout(hidePop, POP_GRACE_MS);
+  }
+
+  /** 把当前这条词写进白名单。写完 storage.onChanged 会触发重建 + 重扫，页面自己就恢复了。 */
+  function whitelistCurrent() {
+    const keyword = popKeyword;
+    if (!keyword || !pop) return;
+
+    pop.btn.disabled = true;
+    pop.btn.textContent = "正在加入…";
+
+    chrome.storage.local.get("config", (result) => {
+      const next = { ...DEFAULTS, ...(result && result.config) };
+      const list = Array.isArray(next.whitelist) ? next.whitelist.slice() : [];
+      // 判重用的是和匹配、和设置面板同一套归一化规则
+      if (!globalThis.XSF_buildWhitelistIndex(list, next).has(keyword)) {
+        list.push(keyword);
+      }
+      chrome.storage.local.set({ config: { ...next, whitelist: list } }, () => {
+        if (pop) pop.btn.textContent = "已加入白名单";
+        setTimeout(hidePop, 700);
+      });
+    });
+  }
+
+  function hookPop() {
+    document.addEventListener("mouseover", (e) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const mark = target.closest(HL_SEL);
+      if (!mark) return;
+      clearTimeout(popHideTimer);
+      showPop(mark);
+    });
+
+    document.addEventListener("mouseout", (e) => {
+      const target = e.target;
+      if (target instanceof Element && target.closest(HL_SEL)) hidePopSoon();
+    });
+
+    // 卡片是 fixed 定位的，页面一滚位置就错了，直接收掉
+    window.addEventListener("scroll", hidePop, { passive: true, capture: true });
   }
 
   // ==================== 徽标计数 ====================
@@ -498,6 +868,9 @@
 
       if (matchingChanged(prev, cfg)) {
         refresh({ rebuild: true });
+      } else if (prev.highlightHit !== cfg.highlightHit) {
+        // 高亮是插在 DOM 里的 <mark>，开关它得重新过一遍页面 —— 但词库不用重编
+        refresh();
       } else {
         // 只是换了显示方式 / 拖了透明度滑块 —— 改一个属性就够了，不重新扫描
         applyStyleVars();
@@ -517,6 +890,7 @@
     buildMatchers();
     watchConfig();
     hookHistory();
+    hookPop();
 
     active = isStatusPage();
     if (cfg.enabled && active) start();

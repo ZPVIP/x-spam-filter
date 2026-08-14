@@ -36,6 +36,11 @@ globalThis.XSF_DEFAULTS = {
    * 而不是去改词库本身。「恢复默认设置」不会动它。
    */
   whitelist: [],
+  /**
+   * 「变透明」模式下，把命中的那条词在原文里红色高亮（正文、昵称、@用户名都标），
+   * 鼠标移上去还能一键把它加进白名单。排查误伤全靠它。
+   */
+  highlightHit: true,
   /** 除正文外，是否也匹配昵称与 @用户名。 */
   matchNames: true,
   /** 匹配前去掉空白与零宽字符，破解「同 城 约」这类拆字规避。 */
@@ -43,6 +48,13 @@ globalThis.XSF_DEFAULTS = {
   /** 区分大小写（仅影响英文关键词）。 */
   caseSensitive: false
 };
+
+/**
+ * 同一批字符的「正则源码」形态。content script 用它拼宽松正则
+ * （关键词的字与字之间允许夹这些字符），所以必须和下面那个正则保持一致。
+ */
+globalThis.XSF_IGNORABLE_SRC =
+  "[\\s\\u00ad\\u180e\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\ufeff]*";
 
 /** 各类零宽 / 方向控制字符，外加真正的空白。 */
 globalThis.XSF_SPACE_AND_INVISIBLE_RE =

@@ -36,6 +36,7 @@
     whitelist: $("whitelist"),
     whitelistCount: $("whitelist-count"),
     whitelistSaved: $("whitelist-saved"),
+    highlightHit: $("highlight-hit"),
     matchNames: $("match-names"),
     ignoreSpaces: $("ignore-spaces"),
     caseSensitive: $("case-sensitive"),
@@ -115,6 +116,7 @@
       communitySyncedAt: cfg.communitySyncedAt || 0,
       userKeywords: parseKeywords(el.userKeywords.value),
       whitelist: parseKeywords(el.whitelist.value),
+      highlightHit: el.highlightHit.checked,
       matchNames: el.matchNames.checked,
       ignoreSpaces: el.ignoreSpaces.checked,
       caseSensitive: el.caseSensitive.checked
@@ -340,6 +342,7 @@
     el.opacity.value = String(cfg.opacity);
     SOURCES.builtin.toggle.checked = cfg.useBuiltin !== false;
     SOURCES.community.toggle.checked = cfg.useCommunity !== false;
+    el.highlightHit.checked = cfg.highlightHit !== false;
     el.matchNames.checked = cfg.matchNames !== false;
     el.ignoreSpaces.checked = cfg.ignoreSpaces !== false;
     el.caseSensitive.checked = cfg.caseSensitive === true;
@@ -428,6 +431,8 @@
         save();
       });
     }
+    // 纯显示开关：不影响匹配，也不影响白名单比对
+    el.highlightHit.addEventListener("change", () => save());
     el.matchNames.addEventListener("change", () => save());
 
     el.userKeywords.addEventListener("input", () => saveSoon(el.saved));

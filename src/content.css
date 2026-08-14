@@ -18,3 +18,78 @@ html[data-xsf-mode="dim"][data-xsf-invisible="1"] .xsf-filtered {
 html[data-xsf-mode="hide"] .xsf-filtered {
   display: none !important;
 }
+
+/* ── 命中的关键词：就地红色高亮 ───────────────────────────── */
+
+mark.xsf-hl,
+img.xsf-hl-img {
+  /* mark 默认是黄底黑字，全部盖掉，只保留原文颜色 */
+  background: rgba(244, 33, 46, 0.32) !important;
+  color: inherit !important;
+  border-radius: 3px;
+  padding: 0 1px;
+  box-shadow: inset 0 -2px 0 rgba(244, 33, 46, 0.95);
+  cursor: help;
+}
+
+/* 命中范围盖住 emoji 时，emoji 本身是 <img>，只能给它加个红框 */
+img.xsf-hl-img {
+  outline: 2px solid rgba(244, 33, 46, 0.75);
+  outline-offset: 1px;
+}
+
+/* ── 悬停在高亮词上弹出的小卡片（挂在 body 上，不受回复的透明度影响） ── */
+
+.xsf-pop {
+  position: fixed;
+  z-index: 2147483646;
+  max-width: 300px;
+  padding: 10px 12px;
+  border: 1px solid #38444d;
+  border-radius: 12px;
+  background: #15202b;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  color: #e7e9ea;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  text-align: left;
+}
+.xsf-pop[hidden] { display: none; }
+
+.xsf-pop-title {
+  font-size: 11px;
+  color: #8b98a5;
+  margin-bottom: 4px;
+}
+
+.xsf-pop-kw {
+  max-height: 44px;
+  overflow: hidden;
+  margin-bottom: 9px;
+  color: #ff6b74;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.xsf-pop-btn {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: #1d9bf0;
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.xsf-pop-btn:hover { background: #1a8cd8; }
+.xsf-pop-btn:disabled { background: #00ba7c; cursor: default; }
+
+.xsf-pop-hint {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: #8b98a5;
+}
