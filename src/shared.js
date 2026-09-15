@@ -120,6 +120,9 @@ globalThis.XSF_buildWhitelistIndex = function (whitelist, config) {
   };
 };
 
+/** 危险的原型链属性名，禁止作为关键词收录，防止原型污染。 */
+const XSF_DANGEROUS_KEYWORDS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** 把每行一个的词库文本转成去重后的规则列表。 */
 globalThis.XSF_parseKeywordText = function (text) {
   const keywords = [];
@@ -127,7 +130,8 @@ globalThis.XSF_parseKeywordText = function (text) {
 
   for (const line of String(text || "").split(/\r?\n/)) {
     const keyword = line.trim();
-    if (!keyword || seen.has(keyword)) continue;
+    if (!keyword || keyword.length > 500 || seen.has(keyword)) continue;
+    if (XSF_DANGEROUS_KEYWORDS.has(keyword.toLowerCase())) continue;
     seen.add(keyword);
     keywords.push(keyword);
   }
